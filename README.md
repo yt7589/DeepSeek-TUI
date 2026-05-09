@@ -184,7 +184,7 @@ Works on any Tier-1 Rust target — including musl, riscv64, FreeBSD, and older 
 ```bash
 # Linux build deps (Debian/Ubuntu/RHEL):
 #   sudo apt-get install -y build-essential pkg-config libdbus-1-dev
-#   sudo dnf install -y gcc make pkgconf-pkg-config dbus-devel
+#   sudo dnf install -y gcc make pkgconf libdbus-1-dev
 
 git clone https://github.com/Hmbown/DeepSeek-TUI.git
 cd DeepSeek-TUI

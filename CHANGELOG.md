@@ -32,6 +32,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   DeepSeek routes keep the 128K fallback.
 - Fixed npm wrapper version output so `--version` prefers the installed binary
   version instead of stale package metadata when both are available.
+- Fixed multiline composer arrow navigation so holding Up/Down at the first or
+  last line no longer replaces the current draft with prompt history.
+- Clarified the English DeepSeek account-balance footer chip from `bal` to
+  `balance` so it is less likely to be mistaken for session spend.
 - Fixed truncated subagent tool calls and repeated truncated subagent responses
   so they return model-visible errors instead of silently failing.
 
@@ -41,8 +45,9 @@ Thanks to **@ZhulongNT** (#2045), **@cyq1017** (#2521, #2536, #2537, #2559,
 #2562, #2563, #2564), and **@HUQIANTAO** (#2527) for the work harvested into
 this release pass. Thanks also to issue reporters and verification helpers
 including **@New2Niu** (#2561), **@buko** (#2533, #2369), **@wywsoor**
-(#2494), **@ctxyao** (#2556), and **@Dr3259** (#2380) for reports and
-acceptance details that shaped these fixes.
+(#2494), **@ctxyao** (#2556), **@Dr3259** (#2380), and **@caiyilian**
+(#2567) for reports and acceptance details that shaped these fixes, plus the
+WeChat/Chinese UX reports relayed during the final triage pass.
 
 ## [0.8.49] - 2026-06-01
 

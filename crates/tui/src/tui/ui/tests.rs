@@ -6935,7 +6935,7 @@ fn footer_balance_spans_formats_cny() {
     };
     *app.balance_cell.lock().unwrap() = Some(info);
     let spans = footer_balance_spans(&app);
-    assert_eq!(spans_text(&spans), "bal ¥123.5");
+    assert_eq!(spans_text(&spans), "balance ¥123.5");
 }
 
 #[test]
@@ -6948,7 +6948,7 @@ fn footer_balance_spans_formats_usd() {
     };
     *app.balance_cell.lock().unwrap() = Some(info);
     let spans = footer_balance_spans(&app);
-    assert_eq!(spans_text(&spans), "bal $0.50");
+    assert_eq!(spans_text(&spans), "balance $0.50");
 }
 
 #[test]
@@ -6961,7 +6961,7 @@ fn footer_balance_spans_rounds_large_amount() {
     };
     *app.balance_cell.lock().unwrap() = Some(info);
     let spans = footer_balance_spans(&app);
-    assert_eq!(spans_text(&spans), "bal $1235");
+    assert_eq!(spans_text(&spans), "balance $1235");
 }
 
 #[test]
@@ -6974,7 +6974,7 @@ fn footer_balance_spans_treats_unknown_currency_as_usd() {
     };
     *app.balance_cell.lock().unwrap() = Some(info);
     let spans = footer_balance_spans(&app);
-    assert_eq!(spans_text(&spans), "bal $10.0");
+    assert_eq!(spans_text(&spans), "balance $10.0");
 }
 
 #[test]
@@ -6987,7 +6987,7 @@ fn render_footer_from_with_balance_item_shows_balance() {
     };
     *app.balance_cell.lock().unwrap() = Some(info);
     let props = render_footer_from(&app, &[crate::config::StatusItem::Balance], None);
-    assert_eq!(spans_text(&props.balance), "bal $42.5");
+    assert_eq!(spans_text(&props.balance), "balance $42.5");
 }
 
 #[test]
@@ -7323,7 +7323,7 @@ fn composer_arrows_scroll_multiline_input_navigates_lines() {
 }
 
 #[test]
-fn composer_arrow_up_at_first_line_falls_back_to_history_up() {
+fn composer_arrow_up_at_first_line_preserves_multiline_draft() {
     let mut app = create_test_app();
     app.composer_arrows_scroll = false;
     app.input = "line one\nline two".to_string();
@@ -7337,7 +7337,29 @@ fn composer_arrow_up_at_first_line_falls_back_to_history_up() {
         false,
     ));
 
-    assert_eq!(app.input, "previous prompt");
+    assert_eq!(app.input, "line one\nline two");
+    assert_eq!(app.cursor_position, 0);
+    assert!(app.history_index.is_none());
+}
+
+#[test]
+fn composer_arrow_down_at_last_line_preserves_multiline_draft() {
+    let mut app = create_test_app();
+    app.composer_arrows_scroll = false;
+    app.input = "line one\nline two".to_string();
+    app.cursor_position = app.input.chars().count();
+    app.input_history.push("next prompt".to_string());
+
+    assert!(handle_composer_history_arrow(
+        &mut app,
+        KeyEvent::new(KeyCode::Down, KeyModifiers::NONE),
+        false,
+        false,
+    ));
+
+    assert_eq!(app.input, "line one\nline two");
+    assert_eq!(app.cursor_position, app.input.chars().count());
+    assert!(app.history_index.is_none());
 }
 
 // #1443: when mouse capture is off (e.g. Windows CMD), arrow-scroll

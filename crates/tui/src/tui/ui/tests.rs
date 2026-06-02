@@ -4337,7 +4337,7 @@ fn detail_target_prefers_visible_tool_card() {
 
     assert_eq!(detail_target_cell_index(&app), Some(1));
     let expected = format!(
-        "{} Activity: file_search · {} raw",
+        "{} Activity: find · {} raw",
         crate::tui::key_shortcuts::activity_shortcut_label(),
         crate::tui::key_shortcuts::tool_details_shortcut_label()
     );
@@ -5994,16 +5994,13 @@ fn activity_detail_includes_tool_handle_and_neighbor_context() {
     assert!(open_activity_detail_pager(&mut app));
     let body = pop_pager_body(&mut app);
 
-    assert!(body.contains("Activity: read_file"), "{body}");
+    assert!(body.contains("Activity: read"), "{body}");
     assert!(body.contains("Activity chunk: 2 of 3"), "{body}");
     assert!(
         body.contains("Previous activity: 1 of 3 - thinking"),
         "{body}"
     );
-    assert!(
-        body.contains("Next activity: 3 of 3 - tool grep_files"),
-        "{body}"
-    );
+    assert!(body.contains("Next activity: 3 of 3 - find"), "{body}");
     assert!(body.contains("Detail handle: art_call-read"), "{body}");
     assert!(
         body.contains("retrieve_tool_result ref=art_call-read"),
@@ -6038,7 +6035,7 @@ fn activity_detail_fallback_prefers_live_activity_context() {
     let body = pop_pager_body(&mut app);
 
     assert!(body.contains("Turn: turn_live_123456789"));
-    assert!(body.contains("Activity: tool agent_eval"));
+    assert!(body.contains("Activity: delegate"));
     assert!(body.contains("Status: running"));
     assert!(body.contains("agent_id: agent_af58ba3a"));
 }
@@ -6065,7 +6062,7 @@ fn activity_detail_fallback_uses_recent_meaningful_activity_without_full_tool_du
     assert!(open_activity_detail_pager(&mut app));
     let body = pop_pager_body(&mut app);
 
-    assert!(body.contains("Activity: tool read_file"));
+    assert!(body.contains("Activity: read"));
     assert!(body.contains("Status: done"));
     assert!(
         body.contains("Alt+V for details"),

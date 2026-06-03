@@ -513,16 +513,52 @@ fn test_parse_spawn_request_rejects_invalid_role() {
 fn test_parse_spawn_request_accepts_full_role_vocabulary() {
     // Regression for #2649: roles that `SubAgentType::from_str` accepts must
     // also pass the second `normalize_role_alias` validation pass instead of
-    // being rejected with a stale four-value hint.
+    // being rejected with a stale hint.
     for (role, expected_type, expected_role) in [
-        ("reviewer", SubAgentType::Review, "reviewer"),
-        ("review", SubAgentType::Review, "reviewer"),
+        ("general", SubAgentType::General, "worker"),
+        ("general-purpose", SubAgentType::General, "worker"),
+        ("general_purpose", SubAgentType::General, "worker"),
+        ("worker", SubAgentType::General, "worker"),
+        ("default", SubAgentType::General, "default"),
+        ("explore", SubAgentType::Explore, "explorer"),
+        ("exploration", SubAgentType::Explore, "explorer"),
+        ("explorer", SubAgentType::Explore, "explorer"),
+        ("plan", SubAgentType::Plan, "awaiter"),
+        ("planning", SubAgentType::Plan, "awaiter"),
         ("planner", SubAgentType::Plan, "awaiter"),
+        ("awaiter", SubAgentType::Plan, "awaiter"),
+        ("review", SubAgentType::Review, "reviewer"),
+        ("code-review", SubAgentType::Review, "reviewer"),
+        ("code_review", SubAgentType::Review, "reviewer"),
+        ("reviewer", SubAgentType::Review, "reviewer"),
         ("implementer", SubAgentType::Implementer, "implementer"),
+        ("implement", SubAgentType::Implementer, "implementer"),
+        ("implementation", SubAgentType::Implementer, "implementer"),
         ("builder", SubAgentType::Implementer, "implementer"),
         ("verifier", SubAgentType::Verifier, "verifier"),
+        ("verify", SubAgentType::Verifier, "verifier"),
+        ("verification", SubAgentType::Verifier, "verifier"),
+        ("validator", SubAgentType::Verifier, "verifier"),
         ("tester", SubAgentType::Verifier, "verifier"),
+        ("tool-agent", SubAgentType::ToolAgent, "tool_agent"),
+        ("tool_agent", SubAgentType::ToolAgent, "tool_agent"),
+        ("toolagent", SubAgentType::ToolAgent, "tool_agent"),
+        ("executor", SubAgentType::ToolAgent, "tool_agent"),
+        ("execution", SubAgentType::ToolAgent, "tool_agent"),
+        ("fin", SubAgentType::ToolAgent, "tool_agent"),
+        ("custom", SubAgentType::Custom, "custom"),
     ] {
+        assert_eq!(
+            SubAgentType::from_str(role),
+            Some(expected_type.clone()),
+            "from_str should accept role alias {role:?}"
+        );
+        assert_eq!(
+            normalize_role_alias(role),
+            Some(expected_role),
+            "normalize_role_alias should accept role alias {role:?}"
+        );
+
         let input = json!({ "prompt": "do work", "role": role });
         let parsed = parse_spawn_request(&input)
             .unwrap_or_else(|e| panic!("role {role:?} should parse, got {e}"));
@@ -544,6 +580,85 @@ fn test_invalid_role_error_lists_real_aliases() {
         .to_string();
     assert!(err.contains("reviewer"), "hint should list reviewer: {err}");
     assert!(err.contains("verifier"), "hint should list verifier: {err}");
+    assert!(err.contains("custom"), "hint should list custom: {err}");
+    assert!(
+        err.contains("general-purpose"),
+        "hint should list general-purpose: {err}"
+    );
+    assert!(
+        err.contains("code_review"),
+        "hint should list code_review: {err}"
+    );
+    assert!(
+        err.contains("toolagent"),
+        "hint should list toolagent: {err}"
+    );
+    assert!(
+        err.contains("execution"),
+        "hint should list execution: {err}"
+    );
+}
+
+fn schema_property_description<'a>(schema: &'a Value, property: &str) -> &'a str {
+    schema["properties"][property]["description"]
+        .as_str()
+        .unwrap_or_else(|| panic!("missing description for schema property {property:?}"))
+}
+
+#[test]
+fn subagent_tool_schemas_advertise_real_type_and_role_vocabulary() {
+    let tmp = tempdir().expect("tempdir");
+    let manager = new_shared_subagent_manager(tmp.path().to_path_buf(), 1);
+    let agent_open_schema = AgentOpenTool::new(manager.clone(), stub_runtime()).input_schema();
+    let agent_spawn_schema = AgentSpawnTool::new(manager.clone(), stub_runtime()).input_schema();
+    let delegate_schema = DelegateToAgentTool::new(manager, stub_runtime()).input_schema();
+
+    for (schema, property) in [
+        (&agent_open_schema, "type"),
+        (&agent_spawn_schema, "type"),
+        (&delegate_schema, "agent_name"),
+    ] {
+        let description = schema_property_description(schema, property);
+        for alias in [
+            "general",
+            "explore",
+            "plan",
+            "review",
+            "implementer",
+            "verifier",
+            "tool_agent",
+            "custom",
+        ] {
+            assert!(
+                description.contains(alias),
+                "{property} description should list accepted type {alias:?}: {description}"
+            );
+        }
+    }
+
+    for (schema, property) in [
+        (&agent_open_schema, "role"),
+        (&agent_spawn_schema, "role"),
+        (&delegate_schema, "role"),
+    ] {
+        let description = schema_property_description(schema, property);
+        for alias in [
+            "default",
+            "worker",
+            "explorer",
+            "awaiter",
+            "reviewer",
+            "implementer",
+            "verifier",
+            "tool_agent",
+            "custom",
+        ] {
+            assert!(
+                description.contains(alias),
+                "{property} description should list accepted role {alias:?}: {description}"
+            );
+        }
+    }
 }
 
 #[test]

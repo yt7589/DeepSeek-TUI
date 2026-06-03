@@ -94,13 +94,26 @@ const SUBAGENT_STATE_SCHEMA_VERSION: u32 = 1;
 const SUBAGENT_STATE_FILE: &str = "subagents.v1.json";
 const SUBAGENT_RESTART_REASON: &str = "Interrupted by process restart";
 
-const VALID_SUBAGENT_TYPES: &str = "general, explore, plan, review, implementer, verifier, tool_agent, custom, \
-     worker, explorer, awaiter, default, implement, builder, verify, validator, tester, tool-agent, executor, fin";
+const VALID_SUBAGENT_TYPES: &str = "general (aliases: general-purpose, general_purpose, worker, default), \
+     explore (aliases: exploration, explorer), plan (aliases: planning, planner, awaiter), \
+     review (aliases: code-review, code_review, reviewer), implementer (aliases: implement, implementation, builder), \
+     verifier (aliases: verify, verification, validator, tester), tool_agent (aliases: tool-agent, toolagent, executor, execution, fin), custom";
 /// Role aliases accepted by `normalize_role_alias`. Kept in sync with the
 /// match arms below so every input that `SubAgentType::from_str` accepts also
 /// resolves to a canonical role (avoids the dual-validation rejection in #2649).
-const VALID_ROLE_ALIASES: &str = "default, worker, explorer, awaiter, reviewer, implementer, verifier, tool_agent \
-     (aliases: general, explore, plan/planner, review, implement/builder, verify/validator/tester, executor/fin)";
+const VALID_ROLE_ALIASES: &str = "default; worker (aliases: general, general-purpose, general_purpose); \
+     explorer (aliases: explore, exploration); awaiter (aliases: plan, planning, planner); \
+     reviewer (aliases: review, code-review, code_review); implementer (aliases: implement, implementation, builder); \
+     verifier (aliases: verify, verification, validator, tester); tool_agent (aliases: tool-agent, toolagent, executor, execution, fin); custom";
+const SUBAGENT_TYPE_DESCRIPTION: &str = "Sub-agent type. Accepted vocabulary: general (aliases: general-purpose, general_purpose, worker, default), \
+     explore (aliases: exploration, explorer), plan (aliases: planning, planner, awaiter), \
+     review (aliases: code-review, code_review, reviewer), implementer (aliases: implement, implementation, builder), \
+     verifier (aliases: verify, verification, validator, tester), tool_agent (aliases: tool-agent, toolagent, executor, execution, fin), custom.";
+const SUBAGENT_ROLE_DESCRIPTION: &str = "Role alias. Accepted vocabulary: default; worker (aliases: general, general-purpose, general_purpose); \
+     explorer (aliases: explore, exploration); awaiter (aliases: plan, planning, planner); \
+     reviewer (aliases: review, code-review, code_review); implementer (aliases: implement, implementation, builder); \
+     verifier (aliases: verify, verification, validator, tester); tool_agent (aliases: tool-agent, toolagent, executor, execution, fin); custom. \
+     Must match `type` if both are given.";
 /// Whale species used as friendly names for sub-agents in the UI. The full
 /// Cetacea infraorder — baleen whales (Mysticeti), toothed whales
 /// (Odontoceti), plus select dolphin species (family Delphinidae) that
@@ -2085,7 +2098,7 @@ impl ToolSpec for AgentOpenTool {
                 },
                 "type": {
                     "type": "string",
-                    "description": "Sub-agent type: general, explore, plan, review, implementer, verifier, custom"
+                    "description": SUBAGENT_TYPE_DESCRIPTION
                 },
                 "agent_type": {
                     "type": "string",
@@ -2093,7 +2106,7 @@ impl ToolSpec for AgentOpenTool {
                 },
                 "role": {
                     "type": "string",
-                    "description": "Role alias (canonical: default, worker, explorer, awaiter, reviewer, implementer, verifier, tool_agent). Must match `type` if both are given."
+                    "description": SUBAGENT_ROLE_DESCRIPTION
                 },
                 "agent_role": {
                     "type": "string",
@@ -2348,7 +2361,7 @@ impl ToolSpec for AgentSpawnTool {
                 },
                 "type": {
                     "type": "string",
-                    "description": "Sub-agent type: general, explore, plan, review, implementer, verifier, custom. See docs/SUBAGENTS.md for posture per role."
+                    "description": SUBAGENT_TYPE_DESCRIPTION
                 },
                 "agent_type": {
                     "type": "string",
@@ -2360,7 +2373,7 @@ impl ToolSpec for AgentSpawnTool {
                 },
                 "role": {
                     "type": "string",
-                    "description": "Role alias (canonical: default, worker, explorer, awaiter, reviewer, implementer, verifier, tool_agent). Must match `type` if both are given."
+                    "description": SUBAGENT_ROLE_DESCRIPTION
                 },
                 "agent_role": {
                     "type": "string",
@@ -3235,7 +3248,7 @@ impl ToolSpec for AgentAssignTool {
                 },
                 "role": {
                     "type": "string",
-                    "description": "Updated role alias (canonical: default, worker, explorer, awaiter, reviewer, implementer, verifier, tool_agent)."
+                    "description": SUBAGENT_ROLE_DESCRIPTION
                 },
                 "agent_role": {
                     "type": "string",
@@ -3467,7 +3480,7 @@ impl ToolSpec for DelegateToAgentTool {
             "properties": {
                 "agent_name": {
                     "type": "string",
-                    "description": "Name/type alias for the agent (general, explore, plan, review, implementer, verifier, worker, explorer, awaiter, builder, validator, tester)"
+                    "description": SUBAGENT_TYPE_DESCRIPTION
                 },
                 "type": {
                     "type": "string",
@@ -3479,7 +3492,7 @@ impl ToolSpec for DelegateToAgentTool {
                 },
                 "role": {
                     "type": "string",
-                    "description": "Role alias (canonical: default, worker, explorer, awaiter, reviewer, implementer, verifier, tool_agent). Must match `type` if both are given."
+                    "description": SUBAGENT_ROLE_DESCRIPTION
                 },
                 "agent_role": {
                     "type": "string",

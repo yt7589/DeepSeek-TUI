@@ -1000,8 +1000,20 @@ fn auth_status_lines_for_provider(
     let is_active = provider == store.config.provider;
     let active_marker = if is_active { " (active provider)" } else { "" };
 
+    let provider_cfg = store.config.providers.for_provider(provider);
+    let base_url = provider_cfg
+        .base_url
+        .as_deref()
+        .unwrap_or("(default)");
+    let model = provider_cfg
+        .model
+        .as_deref()
+        .unwrap_or("(default)");
+
     vec![
         format!("provider: {}{}", provider.as_str(), active_marker),
+        format!("route: {}", base_url),
+        format!("model: {}", model),
         format!(
             "auth mode: {}",
             store.config.auth_mode.as_deref().unwrap_or("api_key")
@@ -2723,6 +2735,8 @@ mod tests {
 
         assert!(output.contains("provider: arcee"));
         assert!(output.contains("active source: config (last4: ...9999)"));
+        assert!(output.contains("route:"));
+        assert!(output.contains("model:"));
         assert!(!output.contains("sk-arcee-9999"));
 
         let _ = std::fs::remove_file(path);

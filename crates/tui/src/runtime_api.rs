@@ -1,6 +1,6 @@
 //! Runtime HTTP/SSE API for local DeepSeek automation.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::convert::Infallible;
 use std::fs;
 use std::net::{SocketAddr, UdpSocket};
@@ -35,13 +35,17 @@ use crate::automation_manager::{
 };
 use crate::config::{Config, DEFAULT_TEXT_MODEL};
 use crate::mcp::{McpConfig, McpPool};
+use crate::models::{ContentBlock, Message};
 use crate::runtime_threads::{
     CompactThreadRequest, CreateThreadRequest, ExternalApprovalDecision, RuntimeThreadManager,
-    RuntimeThreadManagerConfig, SharedRuntimeThreadManager, StartTurnRequest, SteerTurnRequest,
-    ThreadDetail, ThreadListFilter, ThreadRecord, TurnItemKind, TurnRecord, UpdateThreadRequest,
-    UsageGroupBy,
+    RuntimeThreadManagerConfig, RuntimeTurnStatus, SharedRuntimeThreadManager, StartTurnRequest,
+    SteerTurnRequest, ThreadDetail, ThreadListFilter, ThreadRecord, TurnItemKind,
+    TurnItemLifecycleStatus, TurnRecord, UpdateThreadRequest, UsageGroupBy,
 };
-use crate::session_manager::{SavedSession, SessionManager, SessionMetadata, default_sessions_dir};
+use crate::session_manager::{
+    SavedSession, SessionManager, SessionMetadata, create_saved_session_with_id_and_mode,
+    default_sessions_dir,
+};
 use crate::skill_state::SkillStateStore;
 use crate::task_manager::{
     NewTaskRequest, SharedTaskManager, TaskManager, TaskManagerConfig, TaskRecord, TaskSummary,
@@ -174,6 +178,20 @@ struct SessionDetailResponse {
     metadata: SessionMetadata,
     messages: Vec<serde_json::Value>,
     system_prompt: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct CreateSessionRequest {
+    thread_id: String,
+    title: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct CreateSessionResponse {
+    session_id: String,
+    thread_id: String,
+    message_count: usize,
+    title: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -514,7 +532,10 @@ pub async fn run_http_server(
 
 pub fn build_router(state: RuntimeApiState) -> Router {
     let api_routes = Router::new()
-        .route("/v1/sessions", get(list_sessions))
+        .route(
+            "/v1/sessions",
+            get(list_sessions).post(create_session_from_thread),
+        )
         .route("/v1/sessions/{id}", get(get_session).delete(delete_session))
         .route(
             "/v1/sessions/{id}/resume-thread",
@@ -843,6 +864,150 @@ async fn resume_session_thread(
             summary,
         }),
     ))
+}
+
+async fn create_session_from_thread(
+    State(state): State<RuntimeApiState>,
+    Json(req): Json<CreateSessionRequest>,
+) -> Result<(StatusCode, Json<CreateSessionResponse>), ApiError> {
+    let thread_id = req.thread_id.trim();
+    if thread_id.is_empty() {
+        return Err(ApiError::bad_request("thread_id is required"));
+    }
+
+    let detail = state
+        .runtime_threads
+        .get_thread_detail(thread_id)
+        .await
+        .map_err(map_thread_err)?;
+
+    if thread_detail_has_live_work(&detail) {
+        return Err(ApiError {
+            status: StatusCode::CONFLICT,
+            message: format!(
+                "Thread {thread_id} has a queued or active turn; wait for completion before saving as a session"
+            ),
+        });
+    }
+
+    let messages = messages_from_thread_detail(&detail);
+    if messages.is_empty() {
+        return Err(ApiError::bad_request(format!(
+            "Thread {thread_id} has no user or assistant messages to save"
+        )));
+    }
+
+    let manager = SessionManager::new(state.sessions_dir.clone())
+        .map_err(|e| ApiError::internal(format!("Failed to open sessions dir: {e}")))?;
+    let total_tokens = total_tokens_from_thread_detail(&detail);
+    let session_id = uuid::Uuid::new_v4().to_string();
+    let mut session = create_saved_session_with_id_and_mode(
+        session_id.clone(),
+        &messages,
+        &detail.thread.model,
+        &detail.thread.workspace,
+        total_tokens,
+        None,
+        Some(&detail.thread.mode),
+    );
+    session.system_prompt = detail.thread.system_prompt.clone();
+
+    if let Some(title) =
+        session_title_override(req.title.as_deref(), detail.thread.title.as_deref())
+    {
+        session.metadata.title = title;
+    }
+    let title = session.metadata.title.clone();
+    let message_count = session.metadata.message_count;
+
+    manager
+        .save_session(&session)
+        .map_err(|e| ApiError::internal(format!("Failed to save session: {e}")))?;
+
+    Ok((
+        StatusCode::CREATED,
+        Json(CreateSessionResponse {
+            session_id,
+            thread_id: detail.thread.id,
+            message_count,
+            title,
+        }),
+    ))
+}
+
+fn thread_detail_has_live_work(detail: &ThreadDetail) -> bool {
+    detail.turns.iter().any(|turn| {
+        matches!(
+            turn.status,
+            RuntimeTurnStatus::Queued | RuntimeTurnStatus::InProgress
+        )
+    }) || detail.items.iter().any(|item| {
+        matches!(
+            item.status,
+            TurnItemLifecycleStatus::Queued | TurnItemLifecycleStatus::InProgress
+        )
+    })
+}
+
+fn messages_from_thread_detail(detail: &ThreadDetail) -> Vec<Message> {
+    let items_by_id: HashMap<&str, _> = detail
+        .items
+        .iter()
+        .map(|item| (item.id.as_str(), item))
+        .collect();
+    let mut messages = Vec::new();
+
+    for turn in &detail.turns {
+        for item_id in &turn.item_ids {
+            let Some(item) = items_by_id.get(item_id.as_str()) else {
+                continue;
+            };
+            let role = match item.kind {
+                TurnItemKind::UserMessage => "user",
+                TurnItemKind::AgentMessage => "assistant",
+                _ => continue,
+            };
+            let Some(text) = item.detail.as_deref().map(str::trim) else {
+                continue;
+            };
+            if text.is_empty() {
+                continue;
+            }
+            messages.push(Message {
+                role: role.to_string(),
+                content: vec![ContentBlock::Text {
+                    text: text.to_string(),
+                    cache_control: None,
+                }],
+            });
+        }
+    }
+
+    messages
+}
+
+fn total_tokens_from_thread_detail(detail: &ThreadDetail) -> u64 {
+    detail
+        .turns
+        .iter()
+        .filter_map(|turn| turn.usage.as_ref())
+        .map(|usage| u64::from(usage.input_tokens) + u64::from(usage.output_tokens))
+        .sum()
+}
+
+fn session_title_override(requested: Option<&str>, thread_title: Option<&str>) -> Option<String> {
+    requested
+        .and_then(nonempty_title)
+        .or_else(|| thread_title.and_then(nonempty_title))
+}
+
+fn nonempty_title(title: &str) -> Option<String> {
+    let trimmed = title.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(truncate_text(trimmed, 50))
+    }
 }
 
 async fn delete_session(
@@ -2152,7 +2317,7 @@ mod tests {
     use futures_util::StreamExt;
     use std::fs;
     use std::sync::Arc;
-    use tokio::sync::{Mutex, mpsc};
+    use tokio::sync::{Mutex, mpsc, oneshot};
     use tokio::time::sleep;
     use uuid::Uuid;
 
@@ -2357,6 +2522,7 @@ mod tests {
             tokio::task::JoinHandle<()>,
         )>,
     > {
+        let _ = rustls::crypto::ring::default_provider().install_default();
         fs::create_dir_all(&sessions_dir)?;
         let manager = TaskManager::start_with_executor(
             TaskManagerConfig {
@@ -2517,6 +2683,34 @@ mod tests {
             }
             if tokio::time::Instant::now() >= deadline {
                 bail!("timed out waiting for terminal turn status for {turn_id}");
+            }
+            sleep(Duration::from_millis(25)).await;
+        }
+    }
+
+    async fn wait_for_in_progress_item(
+        client: &reqwest::Client,
+        addr: SocketAddr,
+        thread_id: &str,
+        timeout: Duration,
+    ) -> Result<()> {
+        let deadline = tokio::time::Instant::now() + timeout;
+        loop {
+            let detail: serde_json::Value = client
+                .get(format!("http://{addr}/v1/threads/{thread_id}"))
+                .send()
+                .await?
+                .error_for_status()?
+                .json()
+                .await?;
+            if detail["items"]
+                .as_array()
+                .is_some_and(|items| items.iter().any(|item| item["status"] == "in_progress"))
+            {
+                return Ok(());
+            }
+            if tokio::time::Instant::now() >= deadline {
+                bail!("timed out waiting for in-progress item in thread {thread_id}");
             }
             sleep(Duration::from_millis(25)).await;
         }
@@ -3641,6 +3835,247 @@ mod tests {
         assert_eq!(detail["thread"]["id"], thread_id);
         assert_eq!(detail["turns"].as_array().map_or(0, Vec::len), 1);
         assert_eq!(detail["items"].as_array().map_or(0, Vec::len), 2);
+
+        handle.abort();
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn session_create_from_completed_thread_saves_messages() -> Result<()> {
+        let root = std::env::temp_dir().join(format!("deepseek-thread-session-{}", Uuid::new_v4()));
+        let sessions_dir = root.join("sessions");
+        let Some((addr, runtime_threads, handle)) =
+            spawn_test_server_with_root(root.clone(), sessions_dir).await?
+        else {
+            return Ok(());
+        };
+        let client = reqwest::Client::new();
+
+        let created: serde_json::Value = client
+            .post(format!("http://{addr}/v1/threads"))
+            .json(&json!({
+                "model": "deepseek-v4-pro",
+                "mode": "plan",
+                "workspace": root.join("workspace")
+            }))
+            .send()
+            .await?
+            .error_for_status()?
+            .json()
+            .await?;
+        let thread_id = created["id"]
+            .as_str()
+            .context("missing thread id")?
+            .to_string();
+
+        let patched: serde_json::Value = client
+            .patch(format!("http://{addr}/v1/threads/{thread_id}"))
+            .json(&json!({ "title": "Thread title fallback" }))
+            .send()
+            .await?
+            .error_for_status()?
+            .json()
+            .await?;
+        assert_eq!(patched["title"], "Thread title fallback");
+
+        runtime_threads
+            .seed_thread_from_messages(
+                &thread_id,
+                &[
+                    Message {
+                        role: "user".to_string(),
+                        content: vec![ContentBlock::Text {
+                            text: "Please save this runtime thread".to_string(),
+                            cache_control: None,
+                        }],
+                    },
+                    Message {
+                        role: "assistant".to_string(),
+                        content: vec![ContentBlock::Text {
+                            text: "Saved replies should round-trip.".to_string(),
+                            cache_control: None,
+                        }],
+                    },
+                ],
+            )
+            .await?;
+
+        let resp = client
+            .post(format!("http://{addr}/v1/sessions"))
+            .json(&json!({ "thread_id": thread_id }))
+            .send()
+            .await?;
+        assert_eq!(resp.status(), StatusCode::CREATED);
+        let saved: serde_json::Value = resp.json().await?;
+        assert_eq!(saved["thread_id"], thread_id);
+        assert_eq!(saved["message_count"], 2);
+        assert_eq!(saved["title"], "Thread title fallback");
+        let session_id = saved["session_id"]
+            .as_str()
+            .context("missing session id")?
+            .to_string();
+
+        let detail: serde_json::Value = client
+            .get(format!("http://{addr}/v1/sessions/{session_id}"))
+            .send()
+            .await?
+            .error_for_status()?
+            .json()
+            .await?;
+        assert_eq!(detail["metadata"]["title"], "Thread title fallback");
+        assert_eq!(detail["metadata"]["model"], "deepseek-v4-pro");
+        assert_eq!(detail["metadata"]["mode"], "plan");
+        assert_eq!(detail["metadata"]["message_count"], 2);
+        assert_eq!(detail["messages"][0]["role"], "user");
+        assert_eq!(
+            detail["messages"][0]["content"][0]["text"],
+            "Please save this runtime thread"
+        );
+        assert_eq!(detail["messages"][1]["role"], "assistant");
+
+        let manual_title: serde_json::Value = client
+            .post(format!("http://{addr}/v1/sessions"))
+            .json(&json!({
+                "thread_id": thread_id,
+                "title": "Manual saved title"
+            }))
+            .send()
+            .await?
+            .error_for_status()?
+            .json()
+            .await?;
+        assert_eq!(manual_title["title"], "Manual saved title");
+        assert_ne!(manual_title["session_id"], session_id);
+
+        handle.abort();
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn session_create_from_thread_returns_404_for_missing_thread() -> Result<()> {
+        let Some((addr, _runtime_threads, handle)) = spawn_test_server().await? else {
+            return Ok(());
+        };
+        let client = reqwest::Client::new();
+
+        let resp = client
+            .post(format!("http://{addr}/v1/sessions"))
+            .json(&json!({ "thread_id": "thr_missing" }))
+            .send()
+            .await?;
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+
+        handle.abort();
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn session_create_from_thread_rejects_active_turn() -> Result<()> {
+        let Some((addr, runtime_threads, handle)) = spawn_test_server().await? else {
+            return Ok(());
+        };
+        let client = reqwest::Client::new();
+
+        let created: serde_json::Value = client
+            .post(format!("http://{addr}/v1/threads"))
+            .json(&json!({}))
+            .send()
+            .await?
+            .error_for_status()?
+            .json()
+            .await?;
+        let thread_id = created["id"]
+            .as_str()
+            .context("missing thread id")?
+            .to_string();
+
+        let harness = crate::core::engine::mock_engine_handle();
+        runtime_threads
+            .install_test_engine(&thread_id, harness.handle.clone())
+            .await?;
+        let mut rx_op = harness.rx_op;
+        let tx_event = harness.tx_event;
+        let (active_tx, active_rx) = oneshot::channel();
+        let (finish_tx, finish_rx) = oneshot::channel();
+        tokio::spawn(async move {
+            if !matches!(rx_op.recv().await, Some(Op::SendMessage { .. })) {
+                return;
+            }
+            let _ = tx_event
+                .send(EngineEvent::TurnStarted {
+                    turn_id: "mock_active_session_save".to_string(),
+                })
+                .await;
+            let _ = tx_event
+                .send(EngineEvent::MessageStarted { index: 0 })
+                .await;
+            let _ = active_tx.send(());
+            let _ = finish_rx.await;
+            let _ = tx_event
+                .send(EngineEvent::MessageDelta {
+                    index: 0,
+                    content: "now complete".to_string(),
+                })
+                .await;
+            let _ = tx_event
+                .send(EngineEvent::MessageComplete { index: 0 })
+                .await;
+            let _ = tx_event
+                .send(EngineEvent::TurnComplete {
+                    usage: Usage {
+                        input_tokens: 2,
+                        output_tokens: 1,
+                        ..Usage::default()
+                    },
+                    status: TurnOutcomeStatus::Completed,
+                    error: None,
+                    tool_catalog: None,
+                    base_url: None,
+                })
+                .await;
+        });
+
+        let started: serde_json::Value = client
+            .post(format!("http://{addr}/v1/threads/{thread_id}/turns"))
+            .json(&json!({ "prompt": "save me while active" }))
+            .send()
+            .await?
+            .error_for_status()?
+            .json()
+            .await?;
+        let turn_id = started["turn"]["id"]
+            .as_str()
+            .context("missing turn id")?
+            .to_string();
+        tokio::time::timeout(Duration::from_secs(2), active_rx)
+            .await
+            .context("timed out waiting for mock active turn")?
+            .context("mock active turn sender dropped")?;
+        wait_for_in_progress_item(&client, addr, &thread_id, Duration::from_secs(2)).await?;
+
+        let resp = client
+            .post(format!("http://{addr}/v1/sessions"))
+            .json(&json!({ "thread_id": thread_id }))
+            .send()
+            .await?;
+        assert_eq!(resp.status(), StatusCode::CONFLICT);
+        let body: serde_json::Value = resp.json().await?;
+        assert!(
+            body["error"]["message"]
+                .as_str()
+                .is_some_and(|message| message.contains("queued or active turn"))
+        );
+
+        let _ = finish_tx.send(());
+        let terminal = wait_for_terminal_turn_status(
+            &client,
+            addr,
+            &thread_id,
+            &turn_id,
+            Duration::from_secs(2),
+        )
+        .await?;
+        assert_eq!(terminal, "completed");
 
         handle.abort();
         Ok(())

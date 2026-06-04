@@ -2,7 +2,7 @@
 
 > DeepSeek-first terminal coding agent with a durable harness: approval-gated
 > local edits, sub-agents, provider/model routing, live verification, rollback,
-> and a v0.9 track for typed WhaleFlow workflows.
+> relay/continuity handoffs, and a v0.9 track for typed WhaleFlow workflows.
 
 [简体中文 README](README.zh-CN.md)
 [日本語 README](README.ja-JP.md)
@@ -30,10 +30,26 @@ Hugging Face stay explicit. Provider, model, base URL, and credentials are
 separate choices so direct-provider APIs do not get blurred with OpenRouter
 aliases.
 
-The active v0.9.0 lane turns that harness into a workflow workbench:
-WhaleFlow typed branch/leaf workflows, deterministic replay, pod-style workflow
-monitoring, provider/model posture, and evidence-backed profile evolution. The
-current execution map lives in
+## Active v0.9 Track
+
+v0.9.0 is not released yet. The current branch is a stewardship lane for making
+long-running CodeWhale work easier to continue, review, and hand off without
+turning the README into release notes.
+
+The v0.9 track keeps the same DeepSeek-first harness and adds work in these
+areas:
+
+| Track | What is changing |
+| --- | --- |
+| Relay and continuity | `/relay`, fork-state handoff, and rich PlanArtifact context preserve the goal, why it matters, evidence, constraints, blockers, changed files, verification state, and the next action. |
+| Transcript calmness | Dense read/search/list-style tool runs can collapse into expandable groups, while failures, running work, shell commands, writes, diffs, plans, and reviews stay visible. |
+| Runtime sessions and workspaces | Branch work extends session/thread runtime APIs, including workspace-aware thread updates, completed-thread session saves, and safer guards around active turns. Treat this as v0.9-track capability until the release ships. |
+| HarmonyOS / OHOS | The lane carries safe OpenHarmony setup, OHOS platform guards, self-update disablement on OHOS, and target gating for PTY and Starlark execpolicy paths. Full OHOS target builds still require a host with the OpenHarmony native SDK configured. |
+| Nix and Starlark compatibility | Dependency stewardship keeps OHOS builds from pulling incompatible Nix-chain crates through PTY or Starlark paths where those features are gated. |
+| Contributor stewardship | Harvested PRs stay credited, contributor identity mapping is machine-readable, and community gates remain dry-run and human-toned while the branch is reviewed. |
+| WhaleFlow | Typed branch/leaf workflows, deterministic replay, pod-style workflow monitoring, provider/model posture, and evidence-backed profile evolution remain the larger v0.9 workbench goal. |
+
+The current execution map lives in
 [docs/V0_9_0_EXECUTION_MAP.md](docs/V0_9_0_EXECUTION_MAP.md).
 
 ## Quickstart
@@ -138,6 +154,19 @@ CodeWhale's harness has four practical parts:
 | Typed tool surface | Shell, file, git, web, MCP, RLM, image, and sub-agent tools are registered with explicit schemas, visibility rules, and compatibility aliases. |
 | Runtime evidence loop | Side-git snapshots, LSP diagnostics, command output, cost/cache accounting, and task state are fed back into the transcript instead of hidden behind the UI. |
 | Approval and sandbox posture | Plan is read-only, Agent uses approval gates, and YOLO auto-approves in trusted workspaces. macOS Seatbelt is enforced; Linux Landlock is detected but not yet enforced; Windows sandboxing is not advertised. |
+
+### Relay And Continuity
+
+Relay is intentional compaction for human and agent handoff. Use `/relay` before
+a long break, a fresh thread, a fork, or a handoff to another agent. It keeps the
+important story small: the objective, why the work is being done, current state,
+changed files, evidence checked, constraints, blockers, and the next concrete
+action.
+
+Automatic compaction protects context windows. Relay protects continuity. In
+the v0.9 track, rich PlanArtifact fields feed the transcript card, Plan-mode
+confirmation, `/relay`, fork-state handoff, and saved-session replay so the
+plan, the evidence, and the next step do not become separate stories.
 
 `codewhale` is the dispatcher CLI. `codewhale-tui` is the companion runtime
 binary it launches for interactive sessions. The TUI talks to an async engine,
@@ -567,7 +596,21 @@ Full Changelog: [CHANGELOG.md](CHANGELOG.md).
 - **[OpenWarp](https://github.com/zerx-lab/warp)** — thank you for prioritizing codewhale support and for collaborating on a better terminal-agent experience.
 - **[Open Design](https://github.com/nexu-io/open-design)** — thank you for support and collaboration around design-forward agent workflows.
 
-This project ships with help from a growing community of contributors:
+This project ships with help from a growing community of contributors. The
+maintainer rule is simple: reports and PRs are real project work, even when the
+final patch has to be narrowed, delayed, or harvested into a maintainer branch.
+
+For the v0.9 track, harvested PRs should keep visible credit in the commit or
+PR body, changelog or release notes, and relevant issue/PR comments. Contributor
+credit should use mappable GitHub identities from `.github/AUTHOR_MAP` or
+numeric noreply addresses, not placeholder local emails. The contribution gate
+is kept in dry-run mode unless a maintainer deliberately enables enforcement;
+when it comments, the tone should be warm and practical rather than treating
+the reporter as the problem. Recurring contributors should be recognized so the
+automation gets out of their way and the public record shows their repeated
+help.
+
+Current and recurring contributors include:
 
 - **[merchloubna70-dot](https://github.com/merchloubna70-dot)** — 28 PRs spanning features, fixes, and VS Code extension scaffolding (#645–#681)
 - **[WyxBUPT-22](https://github.com/WyxBUPT-22)** — Markdown rendering for tables, bold/italic, and horizontal rules (#579)

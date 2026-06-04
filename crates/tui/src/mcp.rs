@@ -2920,6 +2920,11 @@ mod tests {
     use std::sync::atomic::{AtomicBool, Ordering as AtomicOrdering};
     use std::sync::{Arc, Mutex, OnceLock};
 
+    fn test_http_client() -> reqwest::Client {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        reqwest::Client::new()
+    }
+
     async fn lock_mcp_loopback_tests() -> tokio::sync::MutexGuard<'static, ()> {
         static LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
         LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
@@ -3057,7 +3062,7 @@ mod tests {
 
     #[test]
     fn default_mcp_http_get_accepts_json_and_event_stream() {
-        let client = reqwest::Client::new();
+        let client = test_http_client();
         let request =
             with_default_mcp_http_headers(client.get("https://example.invalid/mcp"), false)
                 .build()
@@ -3074,7 +3079,7 @@ mod tests {
 
     #[test]
     fn default_mcp_http_post_accepts_json_and_event_stream() {
-        let client = reqwest::Client::new();
+        let client = test_http_client();
         let request =
             with_default_mcp_http_headers(client.post("https://example.invalid/mcp"), true)
                 .build()
@@ -3094,7 +3099,7 @@ mod tests {
 
     #[test]
     fn streamable_http_transport_stores_headers() {
-        let client = reqwest::Client::new();
+        let client = test_http_client();
         let mut headers = HashMap::new();
         headers.insert("Authorization".to_string(), "Bearer xyz".to_string());
         let transport = StreamableHttpTransport::new(
@@ -4235,7 +4240,7 @@ mod tests {
             }
         });
 
-        let client = reqwest::Client::new();
+        let client = test_http_client();
         let url = format!("http://{addr}/sse");
         let mut transport = SseTransport::connect(
             client,
@@ -4326,7 +4331,7 @@ mod tests {
             }
         });
 
-        let client = reqwest::Client::new();
+        let client = test_http_client();
         let url = format!("http://{addr}/sse");
         let mut transport = SseTransport::connect(
             client,
@@ -4426,7 +4431,7 @@ mod tests {
             }
         });
 
-        let client = reqwest::Client::new();
+        let client = test_http_client();
         let url = format!("http://{addr}/sse");
         let mut headers = HashMap::new();
         headers.insert("X-Custom-Auth".to_string(), "my-test-token".to_string());
@@ -4517,7 +4522,7 @@ mod tests {
             }
         });
 
-        let client = reqwest::Client::new();
+        let client = test_http_client();
         let url = format!("http://{addr}/sse");
         let mut transport = SseTransport::connect(
             client,
@@ -4763,7 +4768,7 @@ mod tests {
 
         let (_sender, receiver) = mpsc::unbounded_channel();
         let mut transport = SseTransport {
-            client: reqwest::Client::new(),
+            client: test_http_client(),
             base_url: format!("http://{addr}/sse"),
             headers: HashMap::new(),
             endpoint_url: Some(format!("http://{addr}/messages")),
@@ -5001,7 +5006,7 @@ mod tests {
     #[test]
     fn session_id_starts_none() {
         let transport = StreamableHttpTransport::new(
-            reqwest::Client::new(),
+            test_http_client(),
             "https://example.invalid/mcp".to_string(),
             HashMap::new(),
         );
@@ -5050,7 +5055,7 @@ mod tests {
                 .unwrap();
         });
 
-        let client = reqwest::Client::new();
+        let client = test_http_client();
         let url = format!("http://{addr}/mcp");
         let mut transport = StreamableHttpTransport::new(client, url, HashMap::new());
 
@@ -5117,7 +5122,7 @@ mod tests {
                 .unwrap();
         });
 
-        let client = reqwest::Client::new();
+        let client = test_http_client();
         let url = format!("http://{addr}/mcp");
         let mut headers = HashMap::new();
         headers.insert("X-Custom-Auth".to_string(), "my-test-token".to_string());

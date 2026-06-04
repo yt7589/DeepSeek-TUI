@@ -26,6 +26,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   grounded objectives, context, sources, critical files, constraints,
   verification, risks, and handoff notes through the transcript card, Plan
   confirmation prompt, `/relay`, fork-state, and saved-session replay.
+- Added `POST /v1/sessions` for runtime clients to save a completed thread as a
+  managed session. The endpoint preserves thread title/model/mode/workspace
+  metadata, maps missing threads to 404, and returns 409 instead of snapshotting
+  queued or active turns.
 
 ### Changed
 
@@ -72,7 +76,8 @@ Thanks to **@cyq1017** for the restore-listing implementation (#2513),
 **@HUQIANTAO** for the `web_run` lock-splitting work (#2502) and turn-metadata
 prefix-cache stability work (#2517), **@xyuai** for canonical CodeWhale
 settings-path migration work (#2730), **@gaord** for the runtime thread
-workspace update API (#2640), **@shenjackyuanjie** for the
+workspace update and completed-thread save APIs (#2640, #2639),
+**@shenjackyuanjie** for the
 HarmonyOS/OpenHarmony port and MatePad Edge validation trail (#2634),
 **@idling11** for the PlanArtifact direction in Plan mode (#2733) and the
 dense tool-call transcript collapse direction (#2738, #2692), and

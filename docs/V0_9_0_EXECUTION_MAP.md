@@ -8,11 +8,11 @@ PR is harvested, superseded, deferred, or closed.
 
 ## Live Counts
 
-- Actual open issues: 445
-- Open PRs: 55
-- Repo API open issue count: 500, because GitHub includes PRs in that total
-- Open issues labeled `v0.9.0`: 119
-- Open issues without a milestone: 101
+- Actual open issues: 446
+- Open PRs: 56
+- Repo API open issue count: 502, because GitHub includes PRs in that total
+- Open issues labeled `v0.9.0`: 133
+- Open issues without a milestone: 102
 
 ## Execution Order
 
@@ -45,6 +45,7 @@ harvest/stewardship commits:
 | #2730 canonical codewhale settings path | Already harvested as `9e15805f6`; follow-up reviewer assertion added on this branch. | Fixes #2664 by reading legacy DeepSeek settings fallbacks, migrating them into `~/.codewhale/settings.toml`, and ensuring `/config` displays the canonical CodeWhale path. `cargo test -p codewhale-tui --bin codewhale-tui --locked settings_ -- --nocapture` passed. |
 | Contributor credit plumbing | Added locally after the co-author audit. | Normalized unpushed harvest author/trailer emails to numeric GitHub noreply identities, added `.github/AUTHOR_MAP`, and wired `scripts/check-coauthor-trailers.py` into CI so future `Harvested from PR #N by @handle` commits require machine-readable credit. |
 | #2640 workspace field on UpdateThreadRequest | Harvested with the stale-engine fix restored. | Added `workspace` to `PATCH /v1/threads/{id}`, rejects empty paths, rejects workspace changes during active turns, and evicts idle cached engines so the next turn uses the new workspace. `cargo test -p codewhale-tui --bin codewhale-tui --locked update_thread_workspace -- --nocapture` and `cargo clippy -p codewhale-tui --locked -- -D warnings` passed. |
+| #2639 POST /v1/sessions endpoint | Locally harvested with the unsafe active-turn snapshot fixed. | Adds `POST /v1/sessions` so runtime clients can save a completed thread as a managed session, preserves title/model/mode/workspace metadata, maps missing threads to 404, and returns 409 while any turn or item is queued/in-progress. `cargo test -p codewhale-tui --bin codewhale-tui --locked session_create -- --nocapture` and `cargo test -p codewhale-tui --bin codewhale-tui --locked session_ -- --nocapture` passed. Credit @gaord; comment/close the original after the integration branch is public. |
 | #2733 PlanArtifact for Plan mode | Locally harvested as a broader continuity-artifact slice. | Added rich `update_plan` fields for objective, context, sources, files, constraints, verification, risks, and handoff notes; renders them in the transcript card and Plan confirmation prompt; preserves them through `/relay`, fork-state, and saved-session replay. `cargo test -p codewhale-tui --bin codewhale-tui --locked plan_ -- --nocapture`, `cargo test -p codewhale-tui --bin codewhale-tui --locked relay_slash_command_routes_to_session_relay_instruction -- --nocapture`, and `cargo clippy -p codewhale-tui --locked -- -D warnings` passed. |
 | #2736 sub-agent model inheritance | Locally harvested with explicit-override and provider-shaping tests. | Tool-agent routing now inherits the parent runtime model instead of hard-coding `deepseek-v4-flash`, while explicit DeepSeek-style tool-agent overrides still win. The `reasoning_effort = off` fast lane is covered by strict OpenAI-like provider request-shaping tests. Credit @h3c-hexin; comment/close the original after the integration branch is public. |
 | #2737 configured `skills_dir` discovery | Locally harvested with explicit-config precedence. | The system prompt now unions workspace-discovered skills and configured `skills_dir` skills instead of treating the configured directory as a fallback. Explicit configured skills are inserted before global defaults so they are not lost behind a large global skill library. Credit @h3c-hexin; comment/close the original after the integration branch is public. |
@@ -66,11 +67,14 @@ v0.9 branch so the remaining Windows/manual checks are explicit.
 
 | Area | Current disposition | Evidence / remaining check |
 | --- | --- | --- |
+| Windows IME/input recovery (#1835) | Partially fixed, still release-blocking. | Current branch has Windows IME recovery and char-routing tests, but the issue remains open with Windows/WSL reports. Needs a real Windows Terminal IME smoke for focus loss, idle, mode switch, first keystroke, and Esc recovery. |
 | Windows width/resize (#2708, #582 class) | Partially fixed on this branch. | #2708 is cherry-picked plus the fanout-card cache invalidation follow-up. `cargo test -p codewhale-tui --bin codewhale-tui --locked terminal_size -- --nocapture` passed. Still needs a real Windows Terminal resize smoke for #582 before #2721 closes. |
 | Windows shell descendant hangs (#2498, #1812 class) | Partially fixed and already harvested. | Foreground orphan-pipe regression passed locally with `cargo test -p codewhale-tui --all-features --locked foreground_shell_does_not_block_on_orphaned_subprocess_pipe -- --nocapture`. PR #2498 should close as harvested, but #1812 remains open for broader input-poll freeze modes and Windows CI/manual confirmation. |
 | Large-repo context startup (#697/#1827 class) | Partially covered. | Project-context pack ordering/budget/noise tests passed with `cargo test -p codewhale-tui --bin codewhale-tui --locked project_context_pack -- --nocapture`. Still missing a synthetic many-file startup smoke that exercises first-turn latency end to end. |
 | Sub-agent timeout and trust model (#1806, #719) | Fixed or covered in current branch. | `heartbeat_timeout_secs` clamp/default test passed, and `agent_open_description_explains_fresh_vs_forked_context_and_trust_model` asserts that sub-agent results are self-reports. |
-| Queued/live input feedback (#2054/#1786 adjacent) | Partially covered. | `cargo test -p codewhale-tui --bin codewhale-tui --locked queued -- --nocapture` passed for queued-message recovery/editing. Still needs one release-note/manual-smoke pass for live shell/work-queue feedback before closing the broader #1786 bucket. |
+| Sub-agent checkpoint/resume (#2029) | Still release-blocking. | Session projection/transcript handles exist, but no checkpoint/continue status or resume contract has landed. Needs a child checkpoint/timeout/resume test that preserves policy and completes. |
+| Live shell/session liveness (#1786) | Partially fixed, still release-blocking. | Shell containment and turn-liveness tests exist, but orphaned PID/session-load reaping and long-running shell LIVE-state recovery remain open. Needs stale PID reaping and live-state regression coverage. |
+| Queued/live input feedback (#2054) | Partially covered; UX clarity still blocking. | `cargo test -p codewhale-tui --bin codewhale-tui --locked queued -- --nocapture` passed for queued-message recovery/editing, but pending rows still need clear delivery-mode labels and cancel/edit-mode clarity tests. |
 | Prompt/UI calmness (#1191) | Defer or narrow. | No release-blocking regression evidence yet; keep as polish unless a current user-facing prompt/UI failure is identified. |
 
 ## PR Harvest Queue
@@ -124,7 +128,7 @@ v0.9 branch so the remaining Windows/manual checks are explicit.
 | #2634 HarmonyOS port | Draft / locally harvested | Harvested with credit and extra Nix-chain fixes. Keep the original PR open for now; comment after the integration branch is public and request a real OHOS SDK build confirmation from the contributor before closing. |
 | #2635 output rows cache | Mergeable | Already harvested into the 22-commit stack. |
 | #2636 project-context cache | Conflicting | Defer/harvest only after cache correctness fixes. |
-| #2639 POST /v1/sessions endpoint | Mergeable | Defer; app-server contract needs focused review. |
+| #2639 POST /v1/sessions endpoint | Mergeable / locally harvested | Harvested with a 409 guard for queued/in-progress turns/items, 404 missing-thread mapping, saved-session metadata preservation, and focused session endpoint tests. Comment/close after the integration branch is public, crediting @gaord. |
 | #2640 workspace field on UpdateThreadRequest | Mergeable | Harvested locally with extra tests and engine-cache invalidation. Comment/close original after integration branch is public, crediting @gaord. |
 | #2646 release publish hardening | Mergeable | Already harvested into the 22-commit stack. |
 | #2687 append-only mode/approval prompt | Draft/mergeable | Defer. Review found compile failures and Agent-mode prompt leakage into Plan sessions via hard-coded prompt refresh. |
@@ -155,7 +159,7 @@ Issue count should drop through evidence-backed consolidation, not bulk closing.
 ## Immediate Next Actions
 
 1. Prepare public comments for #2476, #2498, #2708, #2502, #2513, #2530,
-   #2576, #2581, #2627, #2634, #2636, #2687, #2736, #2737, #2738, and
+   #2576, #2581, #2627, #2634, #2636, #2639, #2687, #2736, #2737, #2738, and
    already-harvested performance PRs.
 2. Start file decomposition Phase 1 only after the PR harvest table has no
    unknown high-priority provider/prompt/cache branches.

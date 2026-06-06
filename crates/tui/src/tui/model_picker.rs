@@ -391,18 +391,19 @@ fn picker_model_rows_for_app(app: &App) -> Vec<ModelPickerRow> {
     // the current provider is still reachable. Selecting one switches provider
     // on apply via `resolved_provider` / `build_event`. Rows are sorted by
     // provider key so ordering stays deterministic regardless of map iteration.
-    let mut other_provider_models: Vec<(&String, &String)> = app
+    // Parse each provider key once: drop unknown keys (cannot be applied) and
+    // the active provider (already listed above) in a single pass. `key` is
+    // kept only to keep ordering deterministic via the sort below.
+    let mut other_provider_models: Vec<(&String, ApiProvider, &String)> = app
         .provider_models
         .iter()
-        .filter(|(key, _)| ApiProvider::parse(key) != Some(app.api_provider))
+        .filter_map(|(key, model)| {
+            let provider = ApiProvider::parse(key)?;
+            (provider != app.api_provider).then_some((key, provider, model))
+        })
         .collect();
-    other_provider_models.sort_by(|(a, _), (b, _)| a.cmp(b));
-    for (key, model) in other_provider_models {
-        let Some(provider) = ApiProvider::parse(key) else {
-            // Unknown provider key — we cannot switch to it, so skip rather
-            // than offer a row that would fail to apply.
-            continue;
-        };
+    other_provider_models.sort_by(|(a, ..), (b, ..)| a.cmp(b));
+    for (_key, provider, model) in other_provider_models {
         let model = model.trim();
         if model.is_empty() {
             continue;

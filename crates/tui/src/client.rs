@@ -61,7 +61,10 @@ pub(super) fn from_api_tool_name(name: &str) -> String {
                     break;
                 }
             }
-            if let Ok(code) = u32::from_str_radix(&hex, 16)
+            // Only decode if we got exactly 6 hex digits (matching encoder output).
+            // Fewer digits means a truncated/malformed sequence — pass through as-is.
+            if hex.len() == 6
+                && let Ok(code) = u32::from_str_radix(&hex, 16)
                 && let Some(decoded) = std::char::from_u32(code)
             {
                 if let Some('-') = iter.peek().copied() {
@@ -1395,8 +1398,8 @@ pub(super) fn parse_usage(usage: Option<&Value>) -> Usage {
     });
 
     Usage {
-        input_tokens: input_tokens as u32,
-        output_tokens: output_tokens as u32,
+        input_tokens: input_tokens.min(u64::from(u32::MAX)) as u32,
+        output_tokens: output_tokens.min(u64::from(u32::MAX)) as u32,
         prompt_cache_hit_tokens,
         prompt_cache_miss_tokens,
         reasoning_tokens,

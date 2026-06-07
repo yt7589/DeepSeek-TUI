@@ -114,7 +114,11 @@ impl ToolSpec for ReadFileTool {
                     "start_line must be 1-based and greater than 0".to_string(),
                 ));
             }
-            Some(v) => v as usize,
+            Some(v) => usize::try_from(v).map_err(|_| {
+                ToolError::invalid_input(
+                    "start_line exceeds platform addressable range".to_string(),
+                )
+            })?,
             None => 1,
         };
 
@@ -124,7 +128,14 @@ impl ToolSpec for ReadFileTool {
                     "max_lines must be greater than 0".to_string(),
                 ));
             }
-            Some(v) => std::cmp::min(v as usize, HARD_MAX_READ_LINES),
+            Some(v) => {
+                let converted = usize::try_from(v).map_err(|_| {
+                    ToolError::invalid_input(
+                        "max_lines exceeds platform addressable range".to_string(),
+                    )
+                })?;
+                std::cmp::min(converted, HARD_MAX_READ_LINES)
+            }
             None => DEFAULT_READ_LINES,
         };
 
@@ -292,7 +303,9 @@ fn clean_pdf_text(raw: &str) -> String {
     if any_content {
         let start = out.find(|c: char| c != '\n').unwrap_or(0);
         // Walk back from end to find the last non-newline character.
-        let end = out.rfind(|c: char| c != '\n').map_or(out.len(), |i| i + 1);
+        let end = out.rfind(|c: char| c != '\n').map_or(out.len(), |i| {
+            i + out[i..].chars().next().map_or(1, |c| c.len_utf8())
+        });
         out[start..end].to_string()
     } else {
         String::new()

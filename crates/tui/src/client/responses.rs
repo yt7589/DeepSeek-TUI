@@ -61,13 +61,13 @@ impl DeepSeekClient {
         // map CodeWhale's effort string onto those and omit reasoning entirely
         // when it is disabled. CodeWhale's "auto" has no Codex equivalent and
         // falls back to "medium".
-        if let Some(raw) = request.reasoning_effort.as_deref() {
-            if let Some(effort) = codex_responses_reasoning_effort(raw) {
-                body["reasoning"] = json!({
-                    "effort": effort,
-                    "summary": "auto",
-                });
-            }
+        if let Some(raw) = request.reasoning_effort.as_deref()
+            && let Some(effort) = codex_responses_reasoning_effort(raw)
+        {
+            body["reasoning"] = json!({
+                "effort": effort,
+                "summary": "auto",
+            });
         }
 
         // Include reasoning summaries in the stream.

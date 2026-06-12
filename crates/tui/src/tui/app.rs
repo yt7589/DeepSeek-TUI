@@ -1516,6 +1516,8 @@ pub struct App {
     pub sidebar_resize_total_width: u16,
     /// Sidebar width changed during this drag and needs persistence.
     pub sidebar_width_dirty: bool,
+    /// Sidebar focus/hidden state changed and needs persistence.
+    pub sidebar_focus_dirty: bool,
     /// Whether the session-context panel is enabled (#504).
     pub context_panel: bool,
     /// Minimum number of consecutive safe tool cells needed for auto-collapse.
@@ -2300,6 +2302,7 @@ impl App {
             last_sidebar_handle_area: None,
             sidebar_resize_total_width: 0,
             sidebar_width_dirty: false,
+            sidebar_focus_dirty: false,
             context_panel: settings.context_panel,
             tool_collapse_threshold: 3,
             expanded_tool_runs: HashSet::new(),
@@ -3452,7 +3455,10 @@ impl App {
     }
 
     pub fn set_sidebar_focus(&mut self, focus: SidebarFocus) {
-        self.sidebar_focus = focus;
+        if self.sidebar_focus != focus {
+            self.sidebar_focus = focus;
+            self.sidebar_focus_dirty = true;
+        }
         self.needs_redraw = true;
     }
 

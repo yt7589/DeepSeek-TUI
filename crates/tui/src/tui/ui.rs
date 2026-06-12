@@ -2401,6 +2401,7 @@ async fn run_event_loop(
                         {
                             let in_tmux = std::env::var("TMUX").is_ok_and(|v| !v.is_empty());
                             let msg = notifications::subagent_completion_message(
+                                app.ui_locale,
                                 &id,
                                 &result,
                                 include_summary,
@@ -3017,14 +3018,7 @@ async fn run_event_loop(
                 {
                     return Ok(());
                 }
-                // Persist sidebar width when the user finishes a drag-to-resize.
-                if app.sidebar_width_dirty {
-                    app.sidebar_width_dirty = false;
-                    if let Ok(mut settings) = Settings::load() {
-                        settings.update_sidebar_width(app.sidebar_width_percent);
-                        let _ = settings.save();
-                    }
-                }
+                persist_sidebar_settings_if_dirty(app);
                 continue;
             }
 
@@ -3447,14 +3441,7 @@ async fn run_event_loop(
                 {
                     return Ok(());
                 }
-                // Persist sidebar width when the user finishes a drag-to-resize.
-                if app.sidebar_width_dirty {
-                    app.sidebar_width_dirty = false;
-                    if let Ok(mut settings) = Settings::load() {
-                        settings.update_sidebar_width(app.sidebar_width_percent);
-                        let _ = settings.save();
-                    }
-                }
+                persist_sidebar_settings_if_dirty(app);
                 continue;
             }
 
@@ -4606,6 +4593,27 @@ fn dispatch_hotbar_slot(
 fn apply_alt_4_shortcut(app: &mut App, _modifiers: KeyModifiers) {
     app.set_sidebar_focus(SidebarFocus::Agents);
     app.status_message = Some("Sidebar focus: agents".to_string());
+}
+
+fn persist_sidebar_settings_if_dirty(app: &mut App) {
+    if !app.sidebar_width_dirty && !app.sidebar_focus_dirty {
+        return;
+    }
+
+    let width_dirty = app.sidebar_width_dirty;
+    let focus_dirty = app.sidebar_focus_dirty;
+    app.sidebar_width_dirty = false;
+    app.sidebar_focus_dirty = false;
+
+    if let Ok(mut settings) = Settings::load() {
+        if width_dirty {
+            settings.update_sidebar_width(app.sidebar_width_percent);
+        }
+        if focus_dirty {
+            let _ = settings.set("sidebar_focus", app.sidebar_focus.as_setting());
+        }
+        let _ = settings.save();
+    }
 }
 
 fn apply_alt_0_shortcut(app: &mut App, modifiers: KeyModifiers) {

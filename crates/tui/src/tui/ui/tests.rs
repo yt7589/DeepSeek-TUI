@@ -3499,6 +3499,7 @@ fn ctrl_alt_0_hides_sidebar() {
     apply_alt_0_shortcut(&mut app, KeyModifiers::ALT | KeyModifiers::CONTROL);
 
     assert_eq!(app.sidebar_focus, SidebarFocus::Hidden);
+    assert!(app.sidebar_focus_dirty);
     assert_eq!(app.status_message.as_deref(), Some("Sidebar hidden"));
 }
 
@@ -3511,6 +3512,20 @@ fn ctrl_alt_0_restores_auto_sidebar_when_already_hidden() {
 
     assert_eq!(app.sidebar_focus, SidebarFocus::Auto);
     assert_eq!(app.status_message.as_deref(), Some("Sidebar focus: auto"));
+}
+
+#[test]
+fn sidebar_focus_dirty_persists_saved_focus() {
+    let _guard = ConfigPathEnvGuard::new();
+    let mut app = create_test_app();
+    app.sidebar_focus = SidebarFocus::Hidden;
+    app.sidebar_focus_dirty = true;
+
+    persist_sidebar_settings_if_dirty(&mut app);
+
+    assert!(!app.sidebar_focus_dirty);
+    let settings = crate::settings::Settings::load().expect("load settings");
+    assert_eq!(settings.sidebar_focus, "hidden");
 }
 
 #[test]
@@ -9421,7 +9436,7 @@ fn completed_turn_notification_uses_streaming_text() {
         Duration::from_secs(12),
         None,
     );
-    assert_eq!(msg, "Hello there.\nWhat's next?");
+    assert_eq!(msg, "Turn complete\nHello there.\nWhat's next?");
 }
 
 #[test]
@@ -9456,7 +9471,7 @@ fn completed_turn_notification_falls_back_to_latest_assistant_message() {
         Duration::from_secs(75),
         None,
     );
-    assert_eq!(msg, "Latest reply");
+    assert_eq!(msg, "Turn complete\nLatest reply");
 }
 
 #[test]
@@ -9469,7 +9484,7 @@ fn completed_turn_notification_falls_back_to_default_when_empty() {
         Duration::from_secs(5),
         None,
     );
-    assert_eq!(msg, "codewhale: turn complete");
+    assert_eq!(msg, "Turn complete");
 }
 
 #[test]
@@ -9484,34 +9499,55 @@ fn completed_turn_notification_truncates_long_text() {
         None,
     );
     assert!(msg.ends_with("..."));
+    let preview = msg
+        .strip_prefix("Turn complete\n")
+        .expect("notification should lead with completion status");
     // 360-char body + 3-char ellipsis
-    assert_eq!(msg.chars().count(), 363);
+    assert_eq!(preview.chars().count(), 363);
+}
+
+#[test]
+fn completed_turn_notification_leads_with_user_locale() {
+    let mut app = create_test_app();
+    app.ui_locale = crate::localization::Locale::Ja;
+    let msg = crate::tui::notifications::completed_turn_message(
+        &app,
+        "完了しました。",
+        true,
+        Duration::from_secs(65),
+        None,
+    );
+    assert_eq!(msg, "ターン完了 (1m 5s)\n完了しました。");
 }
 
 #[test]
 fn subagent_completion_notification_uses_summary_line_not_sentinel() {
     let msg = crate::tui::notifications::subagent_completion_message(
+        crate::localization::Locale::En,
         "agent_live",
         "Finished the docs audit.\n<codewhale:subagent.done>{}</codewhale:subagent.done>",
         false,
         Duration::from_secs(42),
     );
 
-    assert_eq!(msg, "sub-agent agent_live: Finished the docs audit.");
+    assert_eq!(
+        msg,
+        "Sub-agent complete\nagent_live: Finished the docs audit."
+    );
     assert!(!msg.contains("codewhale:subagent.done"));
 }
 
 #[test]
 fn subagent_completion_notification_can_include_elapsed_summary() {
     let msg = crate::tui::notifications::subagent_completion_message(
+        crate::localization::Locale::En,
         "agent_live",
         "",
         true,
         Duration::from_secs(65),
     );
 
-    assert!(msg.contains("codewhale: sub-agent agent_live complete"));
-    assert!(msg.contains("codewhale: sub-agent complete (1m 5s)"));
+    assert_eq!(msg, "Sub-agent complete (1m 5s)\nagent_live");
 }
 
 #[test]

@@ -36,6 +36,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   table and falls back to `[providers.siliconflow]` only for unset
   `api_key`/`base_url`/`model` fields. Thanks @Artenx for the report and
   @idling11 for the PR.
+- **Constitution trust wording (#2950/#3008).** The base prompt now explains
+  that "begins with an A" means a baseline of trust, not a literal output
+  formatting rule. Thanks @cyq1017 for the PR.
 - **TUI mouse-report leak (#3063/#3067).** Strip raw SGR mouse coordinate
   tails from the composer even when `use_mouse_capture` is false, covering
   orphaned terminal reporting state after crashes or focus races.

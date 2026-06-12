@@ -3340,8 +3340,10 @@ fn hotbar_dispatches_bound_slot_and_ignores_empty_slot() {
         "mode-changing hotbar actions should leave the app ready to redraw"
     );
 
-    let mut empty_config = Config::default();
-    empty_config.hotbar = Some(Vec::new());
+    let empty_config = Config {
+        hotbar: Some(Vec::new()),
+        ..Config::default()
+    };
     assert_eq!(
         dispatch_hotbar_slot(&mut app, &empty_config, 1).expect("empty slot is ok"),
         None

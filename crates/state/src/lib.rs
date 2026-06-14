@@ -780,6 +780,47 @@ impl StateStore {
         Ok(())
     }
 
+    /// Accrue additional token and wall-clock usage onto a thread's persisted goal.
+    ///
+    /// This is the durable, additive accounting path for the persistent goal loop: it
+    /// increments `tokens_used` and `time_used_seconds` in a single atomic SQL `UPDATE`
+    /// (`col = col + ?`) so concurrent accruals do not race a read-modify-write. The
+    /// goal's `updated_at` is advanced to the larger of its current value and `now`,
+    /// keeping the timestamp monotonic even if a stale `now` is supplied.
+    ///
+    /// `token_delta` and `time_delta_seconds` are added on the database side; callers
+    /// should pass non-negative deltas (negative values are accepted and will decrement,
+    /// which is intentionally left to the caller's discretion).
+    ///
+    /// Returns the updated [`ThreadGoalRecord`], or `Ok(None)` if the thread has no
+    /// persisted goal. Unlike [`upsert_thread_goal`](Self::upsert_thread_goal) this never
+    /// creates a goal row; it only accumulates onto an existing one.
+    pub fn record_thread_goal_usage(
+        &self,
+        thread_id: &str,
+        token_delta: i64,
+        time_delta_seconds: i64,
+        now: i64,
+    ) -> Result<Option<ThreadGoalRecord>> {
+        let conn = self.conn()?;
+        let changed = conn
+            .execute(
+                r#"
+                UPDATE thread_goals
+                SET tokens_used = tokens_used + ?2,
+                    time_used_seconds = time_used_seconds + ?3,
+                    updated_at = MAX(updated_at, ?4)
+                WHERE thread_id = ?1
+                "#,
+                params![thread_id, token_delta, time_delta_seconds, now],
+            )
+            .context("failed to record thread goal usage")?;
+        if changed == 0 {
+            return Ok(None);
+        }
+        self.get_thread_goal(thread_id)
+    }
+
     /// Retrieve the persisted goal for a thread.
     pub fn get_thread_goal(&self, thread_id: &str) -> Result<Option<ThreadGoalRecord>> {
         let conn = self.conn()?;
@@ -1755,5 +1796,81 @@ mod tests {
             .upsert_thread_goal(&test_goal("missing-thread", "nope"))
             .expect_err("goal without a thread should fail");
         assert!(err.to_string().contains("thread missing-thread not found"));
+    }
+
+    #[test]
+    fn record_thread_goal_usage_accumulates_tokens_and_time() {
+        let store = temp_state_store("thread-goal-usage");
+        store
+            .upsert_thread(&test_thread("thread-1"))
+            .expect("upsert thread");
+
+        // Mirror the runtime, which creates goals with zeroed accounting.
+        let mut goal = test_goal("thread-1", "Ship the persistent goal loop");
+        goal.tokens_used = 0;
+        goal.time_used_seconds = 0;
+        goal.updated_at = 100;
+        store.upsert_thread_goal(&goal).expect("upsert goal");
+
+        // First accrual lands the deltas and advances updated_at.
+        let after_first = store
+            .record_thread_goal_usage("thread-1", 250, 12, 150)
+            .expect("record usage")
+            .expect("goal exists");
+        assert_eq!(after_first.tokens_used, 250);
+        assert_eq!(after_first.time_used_seconds, 12);
+        assert_eq!(after_first.updated_at, 150);
+        // Identity fields are preserved across accrual.
+        assert_eq!(after_first.goal_id, goal.goal_id);
+        assert_eq!(after_first.objective, goal.objective);
+        assert_eq!(after_first.status, goal.status);
+        assert_eq!(after_first.token_budget, goal.token_budget);
+        assert_eq!(after_first.created_at, goal.created_at);
+
+        // Second accrual adds on top of the first (additive, not replacing).
+        let after_second = store
+            .record_thread_goal_usage("thread-1", 75, 8, 200)
+            .expect("record usage")
+            .expect("goal exists");
+        assert_eq!(after_second.tokens_used, 325);
+        assert_eq!(after_second.time_used_seconds, 20);
+        assert_eq!(after_second.updated_at, 200);
+
+        // A stale `now` must not move updated_at backwards.
+        let after_stale = store
+            .record_thread_goal_usage("thread-1", 5, 1, 1)
+            .expect("record usage")
+            .expect("goal exists");
+        assert_eq!(after_stale.tokens_used, 330);
+        assert_eq!(after_stale.time_used_seconds, 21);
+        assert_eq!(after_stale.updated_at, 200);
+
+        // Read back through the normal getter to confirm durability.
+        let persisted = store
+            .get_thread_goal("thread-1")
+            .expect("read goal")
+            .expect("goal exists");
+        assert_eq!(persisted.tokens_used, 330);
+        assert_eq!(persisted.time_used_seconds, 21);
+    }
+
+    #[test]
+    fn record_thread_goal_usage_returns_none_without_goal() {
+        let store = temp_state_store("thread-goal-usage-missing");
+        store
+            .upsert_thread(&test_thread("thread-1"))
+            .expect("upsert thread");
+        // Thread exists but has no goal row yet: accrual is a no-op, not an error,
+        // and must not create a goal.
+        let result = store
+            .record_thread_goal_usage("thread-1", 100, 5, 999)
+            .expect("record usage on goalless thread");
+        assert!(result.is_none());
+        assert!(
+            store
+                .get_thread_goal("thread-1")
+                .expect("read goal")
+                .is_none()
+        );
     }
 }

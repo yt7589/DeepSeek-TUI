@@ -1,5 +1,6 @@
 //! TUI event loop and rendering logic for `DeepSeek` CLI.
 
+use std::cell::Cell;
 use std::collections::{HashSet, VecDeque};
 use std::fmt::Write as _;
 use std::io::{self, Stdout, Write};
@@ -264,69 +265,150 @@ const BEGIN_SYNC_UPDATE: &[u8] = b"\x1b[?2026h";
 /// the complete frame now.
 const END_SYNC_UPDATE: &[u8] = b"\x1b[?2026l";
 const TERMINAL_INPUT_POLL_INTERVAL: Duration = Duration::from_millis(50);
+const TERMINAL_INPUT_HEARTBEAT_INTERVAL: Duration = Duration::from_millis(500);
+const TERMINAL_INPUT_STALL_TIMEOUT: Duration = Duration::from_secs(5);
+const TERMINAL_INPUT_RECOVERY_COOLDOWN: Duration = Duration::from_secs(10);
 const MAX_ENGINE_EVENTS_PER_DRAIN: usize = 128;
 
+enum TerminalInputMessage {
+    Event(Event),
+    Heartbeat,
+    Error(io::Error),
+}
+
 struct TerminalInputPump {
-    rx: std::sync::mpsc::Receiver<io::Result<Event>>,
+    rx: std::sync::mpsc::Receiver<TerminalInputMessage>,
     stop: Arc<AtomicBool>,
     handle: Option<JoinHandle<()>>,
+    last_alive_at: Cell<Instant>,
 }
 
 impl TerminalInputPump {
     fn spawn() -> io::Result<Self> {
+        let (rx, stop, handle) = Self::spawn_parts()?;
+        Ok(Self {
+            rx,
+            stop,
+            handle: Some(handle),
+            last_alive_at: Cell::new(Instant::now()),
+        })
+    }
+
+    fn spawn_parts() -> io::Result<(
+        std::sync::mpsc::Receiver<TerminalInputMessage>,
+        Arc<AtomicBool>,
+        JoinHandle<()>,
+    )> {
         let (tx, rx) = std::sync::mpsc::channel();
         let stop = Arc::new(AtomicBool::new(false));
         let thread_stop = Arc::clone(&stop);
         let handle = thread::Builder::new()
             .name("codewhale-terminal-input".to_string())
             .spawn(move || {
+                let mut last_heartbeat = Instant::now();
                 while !thread_stop.load(Ordering::Acquire) {
                     match event::poll(TERMINAL_INPUT_POLL_INTERVAL) {
                         Ok(true) => match event::read() {
                             Ok(event) => {
-                                if tx.send(Ok(event)).is_err() {
+                                last_heartbeat = Instant::now();
+                                if tx.send(TerminalInputMessage::Event(event)).is_err() {
                                     break;
                                 }
                             }
                             Err(err) => {
-                                let _ = tx.send(Err(err));
+                                let _ = tx.send(TerminalInputMessage::Error(err));
                                 break;
                             }
                         },
-                        Ok(false) => {}
+                        Ok(false) => {
+                            let now = Instant::now();
+                            if now.duration_since(last_heartbeat)
+                                >= TERMINAL_INPUT_HEARTBEAT_INTERVAL
+                            {
+                                last_heartbeat = now;
+                                if tx.send(TerminalInputMessage::Heartbeat).is_err() {
+                                    break;
+                                }
+                            }
+                        }
                         Err(err) => {
-                            let _ = tx.send(Err(err));
+                            let _ = tx.send(TerminalInputMessage::Error(err));
                             break;
                         }
                     }
                 }
             })?;
-        Ok(Self {
-            rx,
-            stop,
-            handle: Some(handle),
-        })
+        Ok((rx, stop, handle))
     }
 
     fn recv_timeout(&self, timeout: Duration) -> io::Result<Option<Event>> {
-        match self.rx.recv_timeout(timeout) {
-            Ok(Ok(event)) => Ok(Some(event)),
-            Ok(Err(err)) => Err(err),
-            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => Ok(None),
-            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => Err(io::Error::new(
-                io::ErrorKind::BrokenPipe,
-                "terminal input pump disconnected",
-            )),
+        let deadline = Instant::now() + timeout;
+        loop {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            match self.rx.recv_timeout(remaining) {
+                Ok(TerminalInputMessage::Event(event)) => {
+                    self.mark_alive();
+                    return Ok(Some(event));
+                }
+                Ok(TerminalInputMessage::Heartbeat) => {
+                    self.mark_alive();
+                    if remaining.is_zero() {
+                        return Ok(None);
+                    }
+                }
+                Ok(TerminalInputMessage::Error(err)) => {
+                    self.mark_alive();
+                    return Err(err);
+                }
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => return Ok(None),
+                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                    return Err(io::Error::new(
+                        io::ErrorKind::BrokenPipe,
+                        "terminal input pump disconnected",
+                    ));
+                }
+            }
         }
     }
 
     fn try_recv(&self) -> io::Result<Option<Event>> {
-        match self.rx.try_recv() {
-            Ok(Ok(event)) => Ok(Some(event)),
-            Ok(Err(err)) => Err(err),
-            Err(std::sync::mpsc::TryRecvError::Empty) => Ok(None),
-            Err(std::sync::mpsc::TryRecvError::Disconnected) => Ok(None),
+        loop {
+            match self.rx.try_recv() {
+                Ok(TerminalInputMessage::Event(event)) => {
+                    self.mark_alive();
+                    return Ok(Some(event));
+                }
+                Ok(TerminalInputMessage::Heartbeat) => {
+                    self.mark_alive();
+                }
+                Ok(TerminalInputMessage::Error(err)) => {
+                    self.mark_alive();
+                    return Err(err);
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => return Ok(None),
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => return Ok(None),
+            }
         }
+    }
+
+    fn mark_alive(&self) {
+        self.last_alive_at.set(Instant::now());
+    }
+
+    fn stalled_for(&self, now: Instant) -> Duration {
+        now.saturating_duration_since(self.last_alive_at.get())
+    }
+
+    #[cfg(target_os = "windows")]
+    fn restart_detached(&mut self) -> io::Result<()> {
+        self.stop.store(true, Ordering::Release);
+        let _ = self.handle.take();
+        let (rx, stop, handle) = Self::spawn_parts()?;
+        self.rx = rx;
+        self.stop = stop;
+        self.handle = Some(handle);
+        self.last_alive_at.set(Instant::now());
+        Ok(())
     }
 }
 
@@ -334,6 +416,11 @@ impl Drop for TerminalInputPump {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::Release);
         if let Some(handle) = self.handle.take() {
+            #[cfg(target_os = "windows")]
+            {
+                drop(handle);
+            }
+            #[cfg(not(target_os = "windows"))]
             let _ = handle.join();
         }
     }
@@ -1369,8 +1456,14 @@ async fn run_event_loop(
     let mut last_focus_recovery = Instant::now()
         .checked_sub(Duration::from_secs(60))
         .unwrap_or_else(Instant::now);
+    #[cfg(target_os = "windows")]
+    let mut terminal_input = TerminalInputPump::spawn()?;
+    #[cfg(not(target_os = "windows"))]
     let terminal_input = TerminalInputPump::spawn()?;
     let mut pending_terminal_events: VecDeque<Event> = VecDeque::new();
+    let mut last_terminal_input_recovery = Instant::now()
+        .checked_sub(TERMINAL_INPUT_RECOVERY_COOLDOWN)
+        .unwrap_or_else(Instant::now);
 
     // Fire-and-forget version check — runs once per session in the
     // background. On success, a short status toast advertises the update
@@ -2987,9 +3080,59 @@ async fn run_event_loop(
         // `TerminalInputPump`, so engine floods cannot pin the OS input read.
         tokio::task::yield_now().await;
 
-        if let Some(evt) =
-            next_terminal_event(&terminal_input, &mut pending_terminal_events, poll_timeout)?
-        {
+        let maybe_terminal_event =
+            next_terminal_event(&terminal_input, &mut pending_terminal_events, poll_timeout)?;
+        if maybe_terminal_event.is_none() {
+            let now = Instant::now();
+            let input_stalled_for = terminal_input.stalled_for(now);
+            if terminal_input_recovery_relevant(app, has_running_agents)
+                && input_stalled_for >= TERMINAL_INPUT_STALL_TIMEOUT
+                && now.duration_since(last_terminal_input_recovery)
+                    >= TERMINAL_INPUT_RECOVERY_COOLDOWN
+            {
+                tracing::warn!(
+                    stalled_ms = input_stalled_for.as_millis(),
+                    "terminal input pump heartbeat stalled; attempting terminal input recovery"
+                );
+                recover_terminal_modes(
+                    terminal.backend_mut(),
+                    app.use_mouse_capture,
+                    app.use_bracketed_paste,
+                );
+                #[cfg(target_os = "windows")]
+                match terminal_input.restart_detached() {
+                    Ok(()) => {
+                        app.push_status_toast(
+                            "Recovered terminal input after a stalled Windows console poll.",
+                            StatusToastLevel::Warning,
+                            None,
+                        );
+                    }
+                    Err(err) => {
+                        tracing::warn!(error = %err, "failed to restart terminal input pump");
+                        app.push_status_toast(
+                            "Terminal input stalled; recovery failed. Restart CodeWhale if keys stop responding.",
+                            StatusToastLevel::Error,
+                            None,
+                        );
+                    }
+                }
+                #[cfg(not(target_os = "windows"))]
+                {
+                    app.push_status_toast(
+                        "Terminal input heartbeat stalled; terminal modes were refreshed.",
+                        StatusToastLevel::Warning,
+                        None,
+                    );
+                }
+                terminal_input.mark_alive();
+                last_terminal_input_recovery = now;
+                force_terminal_repaint = true;
+                app.needs_redraw = true;
+            }
+        }
+
+        if let Some(evt) = maybe_terminal_event {
             app.needs_redraw = true;
 
             // Handle bracketed paste events
@@ -3961,9 +4104,6 @@ async fn run_event_loop(
                                 engine_handle.cancel();
                                 mark_active_turn_cancelled_locally(app);
                                 current_streaming_text.clear();
-                                // #2739: persist the cancelled turn's partial
-                                // messages so --continue can resume from here.
-                                persist_recovery_snapshot(app);
                                 app.status_message = Some("Request cancelled".to_string());
                             }
                         }
@@ -5123,6 +5263,15 @@ fn active_turn_has_running_tool(app: &App) -> bool {
             _ => false,
         })
     })
+}
+
+fn terminal_input_recovery_relevant(app: &App, has_running_agents: bool) -> bool {
+    app.is_loading
+        || has_running_agents
+        || app.is_compacting
+        || app.is_purging
+        || matches!(app.runtime_turn_status.as_deref(), Some("in_progress"))
+        || active_turn_has_running_tool(app)
 }
 
 fn tool_cell_is_running(tool: &ToolCell) -> bool {
@@ -8876,16 +9025,20 @@ async fn apply_approval_decision(
 }
 
 fn mark_active_turn_cancelled_locally(app: &mut App) {
+    // #2739: every local cancel surface (Esc, Ctrl+C, approval abort, paused
+    // command abort) must snapshot before it clears turn state. Otherwise
+    // --continue reloads the previous save and the interrupted turn vanishes.
+    app.streaming_state.reset();
+    app.finalize_active_cell_as_interrupted();
+    app.finalize_streaming_assistant_as_interrupted();
+    persist_recovery_snapshot(app);
     app.is_loading = false;
     app.dispatch_started_at = None;
     app.turn_started_at = None;
     app.turn_last_activity_at = None;
-    app.streaming_state.reset();
     app.runtime_turn_id = None;
     app.runtime_turn_status = None;
     app.suppress_stream_events_until_turn_complete = true;
-    app.finalize_active_cell_as_interrupted();
-    app.finalize_streaming_assistant_as_interrupted();
     crate::retry_status::clear();
     crate::tui::notifications::clear_taskbar_progress();
     crate::tui::notifications::stop_title_animation_quietly();

@@ -5250,6 +5250,7 @@ fn issue_2739_stalled_turn_snapshot_preserves_api_messages() {
 
 #[test]
 fn issue_2739_esc_cancel_preserves_session_messages_before_clear() {
+    let _home = SettingsHomeGuard::new();
     let tmp = tempfile::tempdir().expect("tempdir");
     let manager =
         crate::session_manager::SessionManager::new(tmp.path().join("sessions")).expect("manager");
@@ -5264,10 +5265,13 @@ fn issue_2739_esc_cancel_preserves_session_messages_before_clear() {
     app.runtime_turn_status = Some("in_progress".to_string());
     app.streaming_state.start_text(0, None);
 
-    // Esc → mark_active_turn_cancelled_locally clears turn state but
-    // persist_recovery_snapshot (called immediately after) captures
-    // the messages before they are discarded.
+    // Esc/Ctrl+C/approval abort all flow through mark_active_turn_cancelled_locally,
+    // which snapshots before clearing turn state.
     mark_active_turn_cancelled_locally(&mut app);
+    assert!(
+        app.current_session_id.is_some(),
+        "local cancel should create a resumable session snapshot"
+    );
     let snapshot = build_session_snapshot(&app, &manager);
     assert_eq!(snapshot.messages.len(), 2);
     assert_eq!(snapshot.messages[0].role, "user");
@@ -10600,7 +10604,7 @@ fn six_worker_progress_storm_keeps_input_render_and_cancel_live() {
     );
 
     let (tx, rx) = std::sync::mpsc::channel();
-    tx.send(Ok(Event::Key(KeyEvent::new(
+    tx.send(TerminalInputMessage::Event(Event::Key(KeyEvent::new(
         KeyCode::Char('c'),
         KeyModifiers::CONTROL,
     ))))
@@ -10609,6 +10613,7 @@ fn six_worker_progress_storm_keeps_input_render_and_cancel_live() {
         rx,
         stop: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
         handle: None,
+        last_alive_at: std::cell::Cell::new(Instant::now()),
     };
     let mut pending_terminal_events = VecDeque::new();
     let event = next_terminal_event(
